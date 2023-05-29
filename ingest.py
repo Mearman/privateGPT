@@ -70,13 +70,17 @@ LOADER_MAPPING = {
 
 
 def load_single_document(file_path: str) -> Document:
-    ext = "." + file_path.rsplit(".", 1)[-1]
-    if ext in LOADER_MAPPING:
-        loader_class, loader_args = LOADER_MAPPING[ext]
-        loader = loader_class(file_path, **loader_args)
-        return loader.load()[0]
-
-    raise ValueError(f"Unsupported file extension '{ext}'")
+    try:
+        ext = "." + file_path.rsplit(".", 1)[-1]
+        if ext in LOADER_MAPPING:
+            loader_class, loader_args = LOADER_MAPPING[ext]
+            loader = loader_class(file_path, **loader_args)
+            return loader.load()[0]
+        else:
+            raise ValueError(f"Unsupported file extension '{ext}' for file {file_path}")
+    except Exception as e:
+        print(f"Error occurred while loading the file {file_path}: {str(e)}")
+        return None
 
 
 def load_documents(source_dir: str, ignored_files: List[str] = []) -> List[Document]:
@@ -88,16 +92,31 @@ def load_documents(source_dir: str, ignored_files: List[str] = []) -> List[Docum
         all_files.extend(
             glob.glob(os.path.join(source_dir, f"**/*{ext}"), recursive=True)
         )
-    filtered_files = [file_path for file_path in all_files if file_path not in ignored_files]
+    filtered_files = [
+        file_path for file_path in all_files if file_path not in ignored_files
+    ]
 
     with Pool(processes=os.cpu_count()) as pool:
         results = []
-        with tqdm(total=len(filtered_files), desc='Loading new documents', ncols=80) as pbar:
-            for i, doc in enumerate(pool.imap_unordered(load_single_document, filtered_files)):
-                results.append(doc)
+        with tqdm(
+            total=len(filtered_files), desc="Loading new documents", ncols=100
+        ) as pbar:
+            for i, doc in enumerate(
+                pool.imap_unordered(load_single_document, filtered_files)
+            ):
+                # doc_name = os.path.basename(filtered_files[i])
+                doc_full_path = filtered_files[i]
+                # get doc path relative to SOURCE_DIRECTORY
+                doc_path = os.path.relpath(doc_full_path, source_dir)
+                if doc is not None:
+                    tqdm.write(f"loaded:\t{doc_path}")
+                    results.append(doc)
+                else:
+                    tqdm.write(f"skipped:\t{doc_path}")
                 pbar.update()
 
     return results
+
 
 def process_documents(ignored_files: List[str] = []) -> List[Document]:
     """
@@ -130,7 +149,7 @@ def does_vectorstore_exist(persist_directory: str) -> bool:
 def main():
     # Create embeddings
     embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDINGS_MODEL_NAME)
-
+    texts = []
     if does_vectorstore_exist(config.PERSIST_DIRECTORY):
         # Update and store locally vectorstore
         print(f"Appending to existing vectorstore at {config.PERSIST_DIRECTORY}")
